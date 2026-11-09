@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="es">
+<head><meta charset="UTF-8"><title>ALIGN</title>
+<style>body{background:#08080f;color:#d8e0ff;font:13px/1.5 Consolas,monospace;margin:20px}h1{color:#ffe600;font-size:18px}#status{color:#38e8ff}pre{background:#0d1020;border:1px solid #232a55;padding:12px;max-width:1100px;overflow:auto}</style>
+</head><body>
+<h1>ALIGN USER MP3 vs ORIGINAL COMPILATION</h1>
+<div id="status">iniciando...</div>
+<pre id="out"></pre>
+<script>
+(async () => {
+  const status = document.getElementById('status'), out = document.getElementById('out');
+  const AC = window.AudioContext || window.webkitAudioContext;
+  const ac = new AC();
+  async function load(f) {
+    const res = await fetch(f, { cache: 'no-store' });
+    if (!res.ok) throw new Error(f + ' HTTP ' + res.status);
+    return ac.decodeAudioData(await res.arrayBuffer());
+  }
+  function monoOf(buf) {
+    const len = buf.length, ch = buf.numberOfChannels, o = new Float32Array(len);
+    for (let c = 0; c < ch; c++) { const d = buf.getChannelData(c); for (let i = 0; i < len; i++) o[i] += d[i] / ch; }
+    return o;
+  }
+  function resample(x, src, dst) {
+    const n = Math.floor(x.length * dst / src), out = new Float32Array(n), ratio = src / dst;
+    for (let i = 0; i < n; i++) { const p = i * ratio, i0 = Math.floor(p), i1 = Math.min(x.length - 1, i0 + 1), t = p - i0; out[i] = x[i0] * (1 - t) + x[i1] * t; }
+    return out;
+  }
+  function nextPow2(n) { let p = 1; while (p < n) p <<= 1; return p; }
+  function fft(re, im) {
+    const n = re.length;
+    for (let i = 1, j = 0; i < n; i++) { let bit = n >> 1; for (; j & bit; bit >>= 1) j ^= bit; j ^= bit; if (i < j) { [re[i], re[j]] = [re[j], re[i]]; [im[i], im[j]] = [im[j], im[i]]; } }
+    for (let size = 2; size <= n; size <<= 1) {
+      const half = size >> 1, step = -2 * Math.PI / size;
+      for (let i = 0; i < n; i += size) for (let k = 0; k < half; k++) {
+        const ang = step * k, wr = Math.cos(ang), wi = Math.sin(ang);
+        const ar = re[i + k + half], ai = im[i + k + half];
+        const tr = ar * wr - ai * wi, ti = ar * wi + ai * wr;
+        re[i + k + half] = re[i + k] - tr; im[i + k + half] = im[i + k] - ti;
+        re[i + k] += tr; im[i + k] += ti;
+      }
+    }
+  }
+  function correlate(x, r) {
+    const L = r.length, N = x.length;
+    const size = nextPow2(N + L);
+    const xr = new Float32Array(size), xi = new Float32Array(size), rr = new Float32Array(size), ri = new Float32Array(size);
+    let m = 0; for (let i = 0; i < L; i++) m += r[i]; m /= L;
+    for (let i = 0; i < N; i++) xr[i] = x[i];
+    for (let i = 0; i < L; i++) rr[i] = r[L - 1 - i] - m;
+    let en = 0; for (let i = 0; i < L; i++) en += rr[i] * rr[i];
+    fft(xr, xi); fft(rr, ri);
+    for (let i = 0; i < size; i++) { const ar = xr[i], ai = xi[i], br = rr[i], bi = ri[i]; xr[i] = ar * br - ai * bi; xi[i] = ar * bi + ai * br; }
+    for (let i = 0; i < size; i++) xi[i] = -xi[i];
+    fft(xr, xi);
+    const pre = new Float64Array(N + 1), pre2 = new Float64Array(N + 1);
+    for (let i = 0; i < N; i++) { pre[i + 1] = pre[i] + x[i]; pre2[i + 1] = pre2[i] + x[i] * x[i]; }
+    const corr = new Float32Array(N - L + 1);
+    for (let lag = 0; lag <= N - L; lag++) {
+      const s = pre[lag + L] - pre[lag], ss = pre2[lag + L] - pre2[lag];
+      const varr = ss - s * s / L;
+      corr[lag] = varr <= 1e-9 || en <= 1e-9 ? 0 : (xr[lag + L - 1] / size) / Math.sqrt(varr * en);
+    }
+    return corr;
+  }
+
+  status.textContent = 'cargando...';
+  const [user, orig] = await Promise.all([load('pacman-sound.mp3'), load('sfx-ref/original_pacman-sounds.mp3')]);
+  status.textContent = 'decodificado, correlacionando...';
+  const u = resample(monoOf(user), user.sampleRate, 8000);
+  const o = resample(monoOf(orig), orig.sampleRate, 8000);
+  out.textContent = 'user ' + u.length + ' samples, orig ' + o.length + ' samples\n';
+  const corr = correlate(o, u);
+  let top = [];
+  for (let i = 0; i < corr.length; i++) {
+    const v = Math.abs(corr[i]);
+    if (top.length < 8) { top.push({ v, i }); top.sort((a, b) => b.v - a.v); }
+    else if (v > top[7].v) { top[7] = { v, i }; top.sort((a, b) => b.v - a.v); }
+  }
+  status.textContent = 'listo';
+  window.ALIGN = { best: top.map(t => ({ corr: +t.v.toFixed(4), offset: +(t.i / 8000).toFixed(3) })), userDuration: user.duration, origDuration: orig.duration };
+  out.textContent = JSON.stringify(window.ALIGN, null, 2);
+})().catch(e => { document.getElementById('status').textContent = 'ERROR: ' + e.message; console.error(e); });
+</script>
+</body></html>

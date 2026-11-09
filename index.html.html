@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#000000">
+  <title>PAC-MAN RETRO</title>
+  <link rel="icon" href="data:,">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="retro.css">
+</head>
+<body>
+  <div id="crt" aria-hidden="true"></div>
+
+  <main id="app">
+
+    <!-- ================= INICIO ================= -->
+    <section id="screen-start" class="screen active">
+      <div class="start-wrap">
+        <header class="brand">
+          <h1 class="logo logo-start">PAC<span class="logo-dash">-</span>MAN</h1>
+          <p class="brand-sub">EDICION RETRO</p>
+        </header>
+        <canvas id="startArt" width="380" height="96" aria-hidden="true"></canvas>
+        <button id="btnPlaySolo" class="btn btn-yellow btn-play" type="button">JUGAR</button>
+        <p class="footnote">PULSA JUGAR PARA ELEGIR TU PERFIL</p>
+      </div>
+    </section>
+
+    <!-- ================= PERFILES / REGISTRO ================= -->
+    <section id="screen-auth" class="screen">
+      <div class="auth-wrap">
+        <header class="brand">
+          <h1 class="logo">PAC<span class="logo-dash">-</span>MAN</h1>
+          <p class="brand-sub">EDICION RETRO</p>
+        </header>
+
+        <div class="panel">
+          <h2 class="panel-title">JUGADORES REGISTRADOS</h2>
+          <div id="profileList" class="profile-list"></div>
+          <p id="authEmpty" class="muted hidden">TODAVIA NO HAY PERFILES. CREA EL PRIMERO.</p>
+        </div>
+
+        <div class="panel">
+          <h2 class="panel-title">NUEVO PERFIL</h2>
+          <form id="createForm" autocomplete="off">
+            <label class="field-label" for="nameInput">NOMBRE</label>
+            <input id="nameInput" class="pixel-input" type="text" maxlength="12" placeholder="JUGADOR" spellcheck="false">
+            <label class="field-label">AVATAR</label>
+            <div id="avatarPicker" class="avatar-grid"></div>
+            <p id="authError" class="error hidden"></p>
+            <button class="btn btn-yellow" type="submit">CREAR PERFIL</button>
+          </form>
+        </div>
+
+        <p class="footnote">USA LAS FLECHAS, WASD, IJKL O TFGH PARA MOVERTE</p>
+        <button id="btnAuthBack" class="btn btn-ghost btn-wide" type="button">VOLVER AL INICIO</button>
+      </div>
+    </section>
+
+    <!-- ================= MENU ================= -->
+    <section id="screen-menu" class="screen">
+      <div class="menu-wrap">
+        <div class="menu-left">
+          <header class="brand brand-left">
+            <h1 class="logo">PAC<span class="logo-dash">-</span>MAN</h1>
+            <p class="brand-sub">EDICION RETRO</p>
+          </header>
+
+          <div id="currentProfile" class="profile-chip"></div>
+
+          <div class="panel menu-panel">
+            <h2 class="panel-title">MODO DE JUEGO</h2>
+            <div class="mode-grid">
+              <button class="btn mode-btn" data-players="1">1 JUGADOR</button>
+              <button class="btn mode-btn" data-players="2">2 JUGADORES</button>
+              <button class="btn mode-btn" data-players="3">3 JUGADORES</button>
+              <button class="btn mode-btn" data-players="4">4 JUGADORES</button>
+            </div>
+            <button id="btnHow" class="btn btn-wide" type="button">COMO JUGAR</button>
+            <button id="btnSwitchProfile" class="btn btn-wide btn-ghost" type="button">CAMBIAR PERFIL</button>
+          </div>
+        </div>
+
+        <div class="menu-right">
+          <div class="panel score-panel">
+            <h2 class="panel-title">RECORDS</h2>
+            <div id="recordList" class="record-list"></div>
+          </div>
+          <div class="panel tips-panel">
+            <h2 class="panel-title">OBJETIVO</h2>
+            <p>COME TODOS LOS PUNTOS DEL LABERINTO.</p>
+            <p>LAS BOLAS GRANDES VUELVEN AZULES A LOS FANTASMAS: COMETELOS.</p>
+            <p>EL TUNEL TE DEVUELVE POR EL OTRO LADO.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= SETUP MULTIJUGADOR ================= -->
+    <section id="screen-setup" class="screen">
+      <div class="setup-wrap">
+        <header class="brand brand-left">
+          <h1 class="logo logo-small">JUGADORES</h1>
+          <p class="brand-sub" id="setupSub">SELECCIONA QUIEN JUEGA</p>
+        </header>
+
+        <div id="slotList" class="slot-list"></div>
+
+        <div class="setup-actions">
+          <button id="btnStartGame" class="btn btn-yellow" type="button">COMENZAR PARTIDA</button>
+          <button id="btnBackMenu" class="btn btn-ghost" type="button">VOLVER</button>
+        </div>
+        <div class="panel controls-panel">
+          <h2 class="panel-title">CONTROLES</h2>
+          <div id="controlsList" class="controls-list"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= COMO JUGAR ================= -->
+    <section id="screen-help" class="screen">
+      <div class="help-wrap">
+        <header class="brand brand-left">
+          <h1 class="logo logo-small">COMO JUGAR</h1>
+        </header>
+        <div class="help-grid">
+          <div class="panel">
+            <h2 class="panel-title">REGLAS</h2>
+            <ul class="help-list">
+              <li>COME TODOS LOS PUNTOS PARA GANAR LA PARTIDA.</li>
+              <li>LAS BOLAS GRANDES DAN 50 PUNTOS Y ASUSTAN A LOS FANTASMAS.</li>
+              <li>CON LOS FANTASMAS AZULES CADA UNO VALE 200, 400, 800 Y 1600.</li>
+              <li>LOS FANTASMAS COMIDOS VUELVEN A SU CASA Y REAPARECEN.</li>
+              <li>TIENES 5 VIDAS. GANAS UNA VIDA EXTRA A LOS 10000 PUNTOS.</li>
+              <li>EL TUNEL CENTRAL TE TELETRANSPORTA DE UN LADO AL OTRO.</li>
+              <li>SI MUERES VUELVES AL INICIO CON ESCUDO TEMPORAL.</li>
+            </ul>
+          </div>
+          <div class="panel">
+            <h2 class="panel-title">CONTROLES</h2>
+            <div class="controls-list">
+              <div class="control-row"><span class="p1">P1</span><span>W A S D</span></div>
+              <div class="control-row"><span class="p2">P2</span><span>FLECHAS</span></div>
+              <div class="control-row"><span class="p3">P3</span><span>I J K L</span></div>
+              <div class="control-row"><span class="p4">P4</span><span>T F G H</span></div>
+              <div class="control-row"><span class="key">P</span><span>PAUSA</span></div>
+              <div class="control-row"><span class="key">M</span><span>SONIDO ON / OFF</span></div>
+            </div>
+          </div>
+        </div>
+        <button id="btnHelpBack" class="btn btn-yellow" type="button">VOLVER</button>
+      </div>
+    </section>
+
+    <!-- ================= JUEGO ================= -->
+    <section id="screen-game" class="screen game-screen">
+      <div class="canvas-wrap">
+        <canvas id="game" width="1120" height="920"></canvas>
+      </div>
+
+      <div class="game-actions">
+        <button id="btnPause" class="btn btn-small" type="button">PAUSA</button>
+        <button id="btnSound" class="btn btn-small" type="button">SONIDO ON</button>
+      </div>
+
+      <div id="pauseOverlay" class="overlay hidden">
+        <div class="pause-box panel">
+          <h2 class="pause-title">PAUSA</h2>
+          <button id="btnResume" class="btn btn-yellow" type="button">CONTINUAR</button>
+          <button id="btnQuit" class="btn btn-ghost" type="button">SALIR AL MENU</button>
+        </div>
+      </div>
+
+      <div id="endOverlay" class="overlay hidden">
+        <div class="end-box">
+          <div class="video-frame">
+            <video id="endVideo" class="hidden" playsinline controls></video>
+            <canvas id="cutscene" width="960" height="540"></canvas>
+            <span class="video-label">CINEMATICA FINAL</span>
+          </div>
+          <div class="end-results panel">
+            <h2 id="endTitle" class="end-title">VICTORIA</h2>
+            <p id="endSubtitle" class="end-subtitle"></p>
+            <div id="endRanking" class="end-ranking"></div>
+            <div class="end-actions">
+              <button id="btnReplay" class="btn btn-yellow" type="button">JUGAR OTRA VEZ</button>
+              <button id="btnEndMenu" class="btn btn-ghost" type="button">MENU</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <script src="retro-game.js"></script>
+</body>
+</html>

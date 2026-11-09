@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>SOUND LAB</title>
+<style>
+  body { background:#08080f; color:#d8e0ff; font:14px/1.5 Consolas, monospace; margin:20px; }
+  h1 { color:#ffe600; font-size:18px; }
+  canvas { background:#000; border:1px solid #2533ff; display:block; width:100%; max-width:1100px; }
+  table { border-collapse:collapse; margin-top:16px; width:100%; max-width:1100px; }
+  th, td { border:1px solid #232a55; padding:5px 8px; text-align:left; font-size:12px; vertical-align:top; }
+  th { background:#11162e; color:#38e8ff; position:sticky; top:0; }
+  tr:nth-child(even) { background:#0b0d18; }
+  button { background:#ffe600; border:0; padding:5px 9px; cursor:pointer; font-weight:bold; }
+  .num { color:#ffe600; }
+  .hz { color:#7dff5a; }
+  #status { color:#38e8ff; margin:10px 0; }
+  #meta { color:#9aa4c8; }
+  a { color:#ff9ad5; }
+</style>
+</head>
+<body>
+<h1>PAC-MAN SOUND LAB</h1>
+<div id="status">cargando...</div>
+<div id="meta"></div>
+<canvas id="wave" width="1100" height="180"></canvas>
+<canvas id="spec" width="1400" height="440" style="margin-top:10px"></canvas>
+<div id="toolbar"></div>
+<table id="table"><thead><tr>
+  <th>#</th><th>Inicio</th><th>Dur</th><th>RMS</th><th>Pico</th><th>Freq (Hz)</th><th>Contorno</th><th>Escuchar</th>
+</tr></thead><tbody></tbody></table>
+
+<script>
+(async () => {
+  const status = document.getElementById('status');
+  const meta = document.getElementById('meta');
+  try {
+    status.textContent = 'descargando mp3...';
+    const res = await fetch('pacman-sound.mp3', { cache: 'no-store' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const buf = await res.arrayBuffer();
+    status.textContent = 'decodificando...';
+    const AC = window.AudioContext || window.webkitAudioContext;
+    const ac = new AC();
+    const audio = await ac.decodeAudioData(buf.slice(0));
+    const sr = audio.sampleRate;
+    const ch = audio.numberOfChannels;
+    const len = audio.length;
+
+    // mono
+    const mono = new Float32Array(len);
+    for (let c = 0; c < ch; c++) {
+      const data = audio.getChannelData(c);
+      for (let i = 0; i < len; i++) mono[i] += data[i] / ch;
+    }
+    let peakAll = 0;
+    for (let i = 0; i < len; i++) { const v = Math.abs(mono[i]); if (v > peakAll) peakAll = v; }
+    if (peakAll > 0) for (let i = 0; i < len; i++) mono[i] /= peakAll;
+
+    meta.textContent = `duracion ${audio.duration.toFixed(3)}s | ${sr} Hz | ${ch} canal(es) | ${len} muestras`;
+
+    // ---- segmentacion por energia ----
+    const hop = Math.max(32, Math.round(sr * 0.006)); // ~6 ms
+    const win = hop * 2;
+    const frames = Math.floor((len - win) / hop) + 1;
+    const rms = new Float32Array(frames);
+    for (let f = 0; f < frames; f++) {
+      let s = 0;
+      const off = f * hop;
+      for (let i = 0; i < win; i++) { const v = mono[off + i]; s += v * v; }
+      rms[f] = Math.sqrt(s / win);
+    }
+    const sorted = Array.from(rms).sort((a, b) => a - b);
+    const noise = sorted[Math.floor(sorted.length * 0.2)] || 0;
+    const maxR = sorted[sorted.length - 1] || 0;
+    const thr = Math.max(noise * 3.2, maxR * 0.012, 0.0035);
+
+    const minDur = 0.045;
+    const mergeGap = 0.05;
+    const raws = [];
+    let inSeg = false, segStart = 0;
+    for (let f = 0; f < frames; f++) {
+      const on = rms[f] > thr;
+      if (on && !inSeg) { inSeg = true; segStart = f; }
+      if (!on && inSeg) { inSeg = false; raws.push([segStart, f]); }
+    }
+    if (inSeg) raws.push([segStart, frames]);
+    // fusionar huecos cortos
+    const merged = [];
+    for (const [a, b] of raws) {
+      if (merged.length && a - merged[merged.length - 1][1] <= mergeGap / (hop / sr)) {
+        merged[merged.length - 1][1] = b;
+      } else merged.push([a, b]);
+    }
+    const pad = Math.round(sr * 0.015);
+    const segs = [];
+    for (const [a, b] of merged) {
+      let start = Math.max(0, a * hop - pad);
+      let end = Math.min(len, b * hop + pad);
+      if ((end - start) / sr < minDur) continue;
+      segs.push({ start, end });
+    }
+
+    // ---- FFT ----
+    function fft(re, im) {
+      const n = re.length;
+      for (let i = 1, j = 0; i < n; i++) {
+        let bit = n >> 1;
+        for (; j & bit; bit >>= 1) j ^= bit;
+        j ^= bit;
+        if (i < j) { [re[i], re[j]] = [re[j], re[i]]; [im[i], im[j]] = [im[j], im[i]]; }
+      }
+      for (let size = 2; size <= n; size <<= 1) {
+        const half = size >> 1;
+        const step = -2 * Math.PI / size;
+        for (let i = 0; i < n; i += size) {
+          for (let k = 0; k < half; k++) {
+            const ang = step * k;
+            const wr = Math.cos(ang), wi = Math.sin(ang);
+            const ar = re[i + k + half], ai = im[i + k + half];
+            const tr = ar * wr - ai * wi, ti = ar * wi + ai * wr;
+            re[i + k + half] = re[i + k] - tr;
+            im[i + k + half] = im[i + k] - ti;
+            re[i + k] += tr;
+            im[i + k] += ti;
+          }
+        }
+      }
+    }
+
+    function pitchAt(off, size) {
+      const n = 4096;
+      const re = new Float32Array(n), im = new Float32Array(n);
+      const avail = Math.min(size, len - off);
+      if (avail < 256) return { hz: 0, rms: 0, centroid: 0 };
+      const take = Math.min(n, avail);
+      let sum = 0;
+      for (let i = 0; i < take; i++) {
+        const w = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / (take - 1));
+        re[i] = mono[off + i] * w;
+        sum += mono[off + i] * mono[off + i];
+      }
+      fft(re, im);
+      let best = 0, bestMag = 0, magSum = 0, freqSum = 0;
+      const binHz = sr / n;
+      const lo = Math.max(1, Math.floor(60 / binHz));
+      const hi = Math.min(n / 2 - 2, Math.floor(6000 / binHz));
+      for (let i = lo; i <= hi; i++) {
+        const mag = Math.sqrt(re[i] * re[i] + im[i] * im[i]);
+        magSum += mag; freqSum += mag * i * binHz;
+        if (mag > bestMag) { bestMag = mag; best = i; }
+      }
+      let hz = best * binHz;
+      if (best > 0 && best < n / 2 - 1) {
+        const a = Math.sqrt(re[best - 1] ** 2 + im[best - 1] ** 2);
+        const b = bestMag;
+        const c = Math.sqrt(re[best + 1] ** 2 + im[best + 1] ** 2);
+        const d = a - 2 * b + c;
+        if (d !== 0) hz = (best + 0.5 * (a - c) / d) * binHz;
+      }
+      return { hz, rms: Math.sqrt(sum / take), centroid: magSum ? freqSum / magSum : 0 };
+    }
+
+    const rows = [];
+    segs.forEach((seg, idx) => {
+      const dur = (seg.end - seg.start) / sr;
+      const size = seg.end - seg.start;
+      let sum = 0, peak = 0;
+      for (let i = seg.start; i < seg.end; i++) {
+        const v = mono[i]; sum += v * v; const av = Math.abs(v); if (av > peak) peak = av;
+      }
+      const r = Math.sqrt(sum / Math.max(1, size));
+      const contour = [];
+      const slices = Math.min(6, Math.max(2, Math.round(dur / 0.1)));
+      for (let s = 0; s < slices; s++) {
+        const off = seg.start + Math.floor((size - 1) * (s / Math.max(1, slices - 1)));
+        const sliceSize = Math.min(Math.floor(sr * 0.08), len - off);
+        contour.push(pitchAt(off, sliceSize));
+      }
+      rows.push({
+        index: idx + 1,
+        start: +(seg.start / sr).toFixed(3),
+        end: +(seg.end / sr).toFixed(3),
+        dur: +dur.toFixed(3),
+        rms: +r.toFixed(4),
+        peak: +peak.toFixed(3),
+        hz: contour.map(c => Math.round(c.hz)),
+        centroid: Math.round(contour.reduce((a, c) => a + c.centroid, 0) / contour.length),
+        seg,
+      });
+    });
+
+    // ---- waveform ----
+    const wc = document.getElementById('wave');
+    const wctx = wc.getContext('2d');
+    const W = wc.width, H = wc.height;
+    wctx.fillStyle = '#000'; wctx.fillRect(0, 0, W, H);
+    wctx.strokeStyle = '#1b2bff'; wctx.lineWidth = 1;
+    for (let x = 0; x < W; x++) {
+      const a = Math.floor(x / W * len), b = Math.floor((x + 1) / W * len);
+      let mx = 0;
+      for (let i = a; i < b; i++) { const v = Math.abs(mono[i]); if (v > mx) mx = v; }
+      const h = mx * H * 0.47;
+      wctx.beginPath(); wctx.moveTo(x, H / 2 - h); wctx.lineTo(x, H / 2 + h); wctx.stroke();
+    }
+    wctx.strokeStyle = '#ffe600'; wctx.fillStyle = 'rgba(255,230,0,0.08)';
+    for (const row of rows) {
+      const x = row.start / audio.duration * W;
+      const x2 = row.end / audio.duration * W;
+      wctx.fillRect(x, 0, Math.max(1, x2 - x), H);
+      wctx.beginPath(); wctx.moveTo(x, 0); wctx.lineTo(x, H); wctx.stroke();
+    }
+
+    // ---- espectrograma ----
+    const sc = document.getElementById('spec');
+    const sx = sc.getContext('2d');
+    const SW = sc.width, SH = sc.height;
+    const N = 2048;
+    const img = sx.createImageData(SW, SH);
+    const rw = new Float32Array(N), iw = new Float32Array(N);
+    const bins = new Float32Array(N / 2);
+    const fmin = 50, fmax = 8000;
+    for (let x = 0; x < SW; x++) {
+      const center = Math.floor((x / SW) * len);
+      const off = Math.max(0, Math.min(len - N, center - N / 2));
+      for (let i = 0; i < N; i++) {
+        const w = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / (N - 1));
+        rw[i] = mono[off + i] * w; iw[i] = 0;
+      }
+      fft(rw, iw);
+      for (let k = 0; k < N / 2; k++) bins[k] = Math.sqrt(rw[k] * rw[k] + iw[k] * iw[k]);
+      for (let y = 0; y < SH; y++) {
+        const f = fmin * Math.pow(fmax / fmin, 1 - y / (SH - 1));
+        const k = Math.max(1, Math.min(N / 2 - 1, Math.round(f / (sr / N))));
+        const db = 20 * Math.log10(bins[k] + 1e-9);
+        let t = Math.max(0, Math.min(1, (db + 20) / 65));
+        t = Math.pow(t, 0.85);
+        const idx = (y * SW + x) * 4;
+        if (t < 0.2) { img.data[idx] = 0; img.data[idx + 1] = Math.round(t * 260); img.data[idx + 2] = Math.round(90 + t * 165); }
+        else if (t < 0.55) { img.data[idx] = Math.round((t - 0.2) / 0.35 * 255); img.data[idx + 1] = 0; img.data[idx + 2] = 255; }
+        else { img.data[idx] = 255; img.data[idx + 1] = Math.round((t - 0.55) / 0.45 * 255); img.data[idx + 2] = Math.round(255 - (t - 0.55) / 0.45 * 255); }
+        img.data[idx + 3] = 255;
+      }
+    }
+    sx.putImageData(img, 0, 0);
+    sx.font = '12px monospace';
+    for (let s = 0; s <= Math.floor(audio.duration); s++) {
+      const x = s / audio.duration * SW;
+      sx.strokeStyle = 'rgba(255,255,255,0.25)';
+      sx.beginPath(); sx.moveTo(x, 0); sx.lineTo(x, SH); sx.stroke();
+      if (s % 2 === 0) { sx.fillStyle = '#ffffff'; sx.fillText(s + 's', x + 3, 13); }
+    }
+    const freqs = [100, 250, 500, 1000, 2000, 4000];
+    sx.font = '11px monospace';
+    for (const f of freqs) {
+      const y = (1 - Math.log(f / fmin) / Math.log(fmax / fmin)) * (SH - 1);
+      sx.strokeStyle = 'rgba(255,255,255,0.18)';
+      sx.beginPath(); sx.moveTo(0, y); sx.lineTo(SW, y); sx.stroke();
+      sx.fillStyle = '#ffffff'; sx.fillText(f + 'Hz', 4, y - 2);
+    }
+
+    // ---- tabla ----
+    const tbody = document.querySelector('#table tbody');
+    for (const row of rows) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td class="num">${row.index}</td><td>${row.start.toFixed(3)}s</td><td>${row.dur.toFixed(3)}s</td><td>${row.rms}</td><td>${row.peak}</td><td class="hz">${row.hz.join(' · ')}</td><td>${row.centroid} Hz</td><td></td>`;
+      const btn = document.createElement('button');
+      btn.textContent = '▶';
+      btn.onclick = () => {
+        const b = ac.createBuffer(1, row.seg.end - row.seg.start, sr);
+        b.copyToChannel(mono.slice(row.seg.start, row.seg.end), 0);
+        const src = ac.createBufferSource(); src.buffer = b; src.connect(ac.destination); src.start();
+      };
+      tr.lastElementChild.appendChild(btn);
+      tbody.appendChild(tr);
+    }
+
+    // ---- WAV + ZIP ----
+    function wavBytes(seg) {
+      const n = seg.end - seg.start;
+      const bytes = new Uint8Array(44 + n * 2);
+      const dv = new DataView(bytes.buffer);
+      const wr = (o, s) => { for (let i = 0; i < s.length; i++) bytes[o + i] = s.charCodeAt(i); };
+      wr(0, 'RIFF'); dv.setUint32(4, 36 + n * 2, true); wr(8, 'WAVEfmt ');
+      dv.setUint32(16, 16, true); dv.setUint16(20, 1, true); dv.setUint16(22, 1, true);
+      dv.setUint32(24, sr, true); dv.setUint32(28, sr * 2, true); dv.setUint16(32, 2, true); dv.setUint16(34, 16, true);
+      wr(36, 'data'); dv.setUint32(40, n * 2, true);
+      let o = 44;
+      for (let i = seg.start; i < seg.end; i++) {
+        const v = Math.max(-1, Math.min(1, mono[i]));
+        dv.setInt16(o, v < 0 ? v * 0x8000 : v * 0x7fff, true);
+        o += 2;
+      }
+      return bytes;
+    }
+    const crcTable = (() => {
+      const t = new Uint32Array(256);
+      for (let n = 0; n < 256; n++) {
+        let c = n;
+        for (let k = 0; k < 8; k++) c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
+        t[n] = c >>> 0;
+      }
+      return t;
+    })();
+    function crc32(u8) {
+      let c = 0xffffffff;
+      for (let i = 0; i < u8.length; i++) c = crcTable[(c ^ u8[i]) & 0xff] ^ (c >>> 8);
+      return (c ^ 0xffffffff) >>> 0;
+    }
+    function zipStore(entries) {
+      const parts = []; const central = []; let offset = 0;
+      const enc = new TextEncoder();
+      for (const e of entries) {
+        const name = enc.encode(e.name);
+        const data = e.data;
+        const crc = crc32(data);
+        const lh = new Uint8Array(30 + name.length);
+        const dv = new DataView(lh.buffer);
+        dv.setUint32(0, 0x04034b50, true); dv.setUint16(4, 20, true); dv.setUint16(6, 0, true);
+        dv.setUint16(8, 0, true); dv.setUint16(10, 0, true); dv.setUint16(12, 0, true);
+        dv.setUint32(14, crc, true); dv.setUint32(18, data.length, true); dv.setUint32(22, data.length, true);
+        dv.setUint16(26, name.length, true); dv.setUint16(28, 0, true);
+        lh.set(name, 30);
+        parts.push(lh, data);
+        const cd = new Uint8Array(46 + name.length);
+        const cv = new DataView(cd.buffer);
+        cv.setUint32(0, 0x02014b50, true); cv.setUint16(4, 20, true); cv.setUint16(6, 20, true);
+        cv.setUint16(8, 0, true); cv.setUint16(10, 0, true); cv.setUint16(12, 0, true); cv.setUint16(14, 0, true);
+        cv.setUint32(16, crc, true); cv.setUint32(20, data.length, true); cv.setUint32(24, data.length, true);
+        cv.setUint16(28, name.length, true); cv.setUint16(30, 0, true); cv.setUint16(32, 0, true);
+        cv.setUint16(34, 0, true); cv.setUint16(36, 0, true); cv.setUint32(38, 0, true); cv.setUint32(42, offset, true);
+        cd.set(name, 46);
+        central.push(cd);
+        offset += lh.length + data.length;
+      }
+      const cdSize = central.reduce((a, c) => a + c.length, 0);
+      const eocd = new Uint8Array(22);
+      const ev = new DataView(eocd.buffer);
+      ev.setUint32(0, 0x06054b50, true); ev.setUint16(8, entries.length, true); ev.setUint16(10, entries.length, true);
+      ev.setUint32(12, cdSize, true); ev.setUint32(16, offset, true);
+      return new Blob([...parts, ...central, eocd], { type: 'application/zip' });
+    }
+
+    window.AUDIO_LAB = {
+      sr, channels: ch, duration: audio.duration, mono, fft,
+      rows: rows.map(r => ({ index: r.index, start: r.start, dur: r.dur, rms: r.rms, peak: r.peak, hz: r.hz, centroid: r.centroid })),
+      getSeg: (i) => rows[i].seg,
+      downloadZip() {
+        const entries = rows.map((r, i) => ({
+          name: 'sfx_' + String(i + 1).padStart(2, '0') + '_' + r.start.toFixed(3) + 's.wav',
+          data: wavBytes(r.seg),
+        }));
+        const blob = zipStore(entries);
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'pacman-sounds.zip';
+        document.body.appendChild(a); a.click(); a.remove();
+        return blob.size;
+      },
+      play(i) {
+        const r = rows[i]; const b = ac.createBuffer(1, r.seg.end - r.seg.start, sr);
+        b.copyToChannel(mono.slice(r.seg.start, r.seg.end), 0);
+        const src = ac.createBufferSource(); src.buffer = b; src.connect(ac.destination); src.start();
+      },
+    };
+
+    const tb = document.getElementById('toolbar');
+    const zipBtn = document.createElement('button');
+    zipBtn.textContent = 'DESCARGAR ZIP DE SONIDOS';
+    zipBtn.onclick = () => { const n = window.AUDIO_LAB.downloadZip(); status.textContent = 'zip generado: ' + n + ' bytes'; };
+    tb.appendChild(zipBtn);
+
+    status.textContent = `listo: ${rows.length} sonidos detectados`;
+  } catch (e) {
+    status.textContent = 'ERROR: ' + e.message;
+    console.error(e);
+  }
+})();
+</script>
+</body>
+</html>
